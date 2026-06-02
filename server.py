@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from g4f.client import Client
-import g4f
+import requests
 
 app = FastAPI()
 
@@ -13,7 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = Client()
+OPENROUTER_API_KEY = "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"
 
 @app.post("/generate/")
 async def generate_text(request: Request):
@@ -21,28 +20,26 @@ async def generate_text(request: Request):
     prompt = data.get("prompt", "")
     
     try:
-        # Используем автоподбор лучшего живого провайдера из g4f
-        response = client.chat.completions.create(
-            model=g4f.models.default, # Автоматически выбирает самую стабильную модель (обычно gpt-4o-mini)
-            messages=[{"role": "user", "content": prompt}]
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "mistralai/mistral-7b-instruct:free", 
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=10
         )
         
-        ai_text = response.choices[0].message.content
+        res_json = response.json()
         
-        # Если ИИ почему-то вернул пустоту, подстрахуем его текстом
-        if not ai_text:
-            ai_text = "🔄 Запрос прошел, но ответ оказался пустым. Попробуйте отправить еще раз!"
+        if "error" in res_json:
+            error_msg = res_json["error"].get("message", "Ошибка лимитов")
+            return {"choices": [{"message": {"content": f"❌ Ошибка скорости: {error_msg}"}}]}
             
-        return {
-            "choices": [
-                {
-                    "message": {
-                        "content": ai_text
-                    }
-                }
-            ]
-        }
+        return res_json
 
-    except Exception as e:
-        # Если всё упало, выводим понятную ошибку прямо на экран
-        return {"choices": [{"message": {"content": f"❌ Ошибка ИИ: {str(e)}"}}]}
+    except requests.exceptions.RequestException as e:
+        return {"choices": [{"message": {"content": f"❌ Ошибка сети: {str(e)}"}}]}
